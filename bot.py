@@ -43,7 +43,7 @@ def mochi_caption():
 
 # ── Database ──────────────────────────────────────────────────────────────────
 def db_connect():
-    conn = sqlite3.connect("mochi.db")
+    conn = sqlite3.connect("/data/mochi.db")
     conn.execute("""
         CREATE TABLE IF NOT EXISTS registrations (
             discord_id   TEXT NOT NULL,
