@@ -17,24 +17,25 @@ PREFIX      = "m!"
 
 # ── Mochi personality lines ───────────────────────────────────────────────────
 MOCHI_INTROS = [
-    "🦇 *flutters in* eek! {name} just posted something amazing!!",
-    "🍡 mochi spotted new art from **{name}**!! squeee~",
+    "🦇 *flutters in* waaah!! {name} just posted something!! mochi went all sparkly when she saw it!!",
+    "🍡 eek!! {name} posted!! mochi is so ready for this~",
     "✨ *hangs upside down excitedly* {name} dropped something!! go look go look!!",
-    "🦇 nya~! mochi found fresh art from **{name}**! don't miss it!!",
-    "🍡 *swoops in* HELLO!! {name} posted!! mochi is SO excited rn!!",
-    "🌙 the art bats have spoken... **{name}** has a new post!! 🦇✨",
+    "🦇 mochi found it!! new art from {name}!! she's been hanging around waiting for this~ 🦇",
+    "🍡 *swoops in* eek eek eek!! {name} posted!! mochi is GLOWING right now!!",
+    "🌙 waaah!! mochi spotted something new from {name}!! she went all sparkly the second she saw it~ ✨",
 ]
 
 MOCHI_CAPTIONS = [
     "mochi gives this {hearts} out of 🍡🍡🍡🍡🍡",
     "mochi screamed a little (a lot) when she saw this 🦇",
-    "adding this to mochi's cave wall immediately 🖼️",
-    "mochi demands you go leave a like RIGHT NOW 🦇💕",
+    "adding this to mochi's cave wall immediately~",
+    "mochi is going steady just looking at this. 💜",
     "this is going in the hall of fame. mochi has decided. 🍡",
+    "eek!! mochi went all warm and gold seeing this one~",
 ]
 
 def mochi_intro(username):
-    return random.choice(MOCHI_INTROS).format(name=f"@{username}")
+    return random.choice(MOCHI_INTROS).format(name=f"**@{username}**")
 
 def mochi_caption():
     hearts = random.choice(["💜💜💜💜💜", "💜💜💜💜🤍", "💜💜💜🤍🤍"])
@@ -105,8 +106,8 @@ async def add_account(ctx, link: str = None):
     """m!add <instagram_link_or_username> — register your Instagram"""
     if link is None:
         await ctx.send(
-            "🦇 *blinks* mochi needs a link or username!\n"
-            "Usage: `m!add https://instagram.com/yourname` or `m!add yourname`"
+            "🦇 *blinks*  mochi needs a link or username to work with!!\n"
+            "usage: `m!add instagram.com/yourname`  or just  `m!add yourname`~"
         )
         return
 
@@ -122,14 +123,14 @@ async def add_account(ctx, link: str = None):
             )
         except instaloader.exceptions.ProfileNotExistsException:
             await ctx.send(
-                f"🦇 mochi looked everywhere but couldn't find `@{username}` on Instagram... "
-                f"are you sure that's right? 👀"
+                f"mochi looked absolutely everywhere for `@{username}` and couldn't find it... "
+                f"is the username right? :c"
             )
             return
         except Exception as e:
             await ctx.send(
-                f"🦇 mochi ran into a problem checking that account! "
-                f"Try again in a bit~ (error: `{e}`)"
+                f"something got in mochi's way just now~ try again in a little bit, okay? 💜"
+                f"\n*(error: `{e}`)*"
             )
             return
 
@@ -158,10 +159,9 @@ async def add_account(ctx, link: str = None):
         conn.close()
 
     embed = discord.Embed(
-        title="🍡 account linked!",
+        title="🍡  all linked up!!",
         description=(
-            f"mochi will now watch **@{username}** for new posts and share them "
-            f"in the art feed!\n\n"
+            f"mochi's now watching **@{username}** and will squeak the second something new appears!! eek~\n\n"
             f"[visit profile](https://instagram.com/{username})"
         ),
         color=0xc084fc
@@ -172,8 +172,8 @@ async def add_account(ctx, link: str = None):
     # Warn if no art channel has been set yet
     if get_art_channel(ctx.guild.id) is None:
         embed.add_field(
-            name="⚠️ heads up!",
-            value="no art feed channel is set yet! an admin needs to run `m!setchannel #channel` before mochi can post~",
+            name="psst~",
+            value="no art channel is set yet! an admin can run `m!setchannel` to fix that 💜",
             inline=False
         )
 
@@ -184,7 +184,7 @@ async def add_account(ctx, link: str = None):
 async def remove_account(ctx, link: str = None):
     """m!remove <instagram_link_or_username> — unregister your Instagram"""
     if link is None:
-        await ctx.send("🦇 tell mochi which account to remove! `m!remove username`")
+        await ctx.send("🦇  tell mochi which account to remove! like this:  `m!remove username`~")
         return
 
     username = link.strip("/").split("/")[-1].replace("@", "").lower()
@@ -198,9 +198,9 @@ async def remove_account(ctx, link: str = None):
     conn.close()
 
     if cur.rowcount:
-        await ctx.send(f"🦇 okay! mochi will stop watching **@{username}** for you~ 💜")
+        await ctx.send(f"okay!! mochi will stop watching **@{username}** for you~ 💜")
     else:
-        await ctx.send(f"🦇 mochi doesn't have `@{username}` linked to your account!")
+        await ctx.send(f"mochi doesn't have that account linked to you... are you sure it was added? :c")
 
 
 @bot.command(name="list")
@@ -215,14 +215,14 @@ async def list_accounts(ctx):
 
     if not rows:
         await ctx.send(
-            "🦇 you haven't linked any accounts yet!\n"
-            "Use `m!add <instagram_link>` to get started~"
+            "🦇  you haven't linked anyone yet!!\n"
+            "use `m!add instagram.com/yourname` to get started~"
         )
         return
 
     lines = "\n".join(f"• [@{r[0]}](https://instagram.com/{r[0]})" for r in rows)
     embed = discord.Embed(
-        title="🍡 your linked accounts",
+        title="🍡  here's everyone mochi's watching for you~",
         description=lines,
         color=0xc084fc
     )
@@ -234,11 +234,11 @@ async def list_accounts(ctx):
 async def help_command(ctx):
     """m!help — show all commands"""
     embed = discord.Embed(
-        title="🦇 hi!! i'm mochi!!",
+        title="🦇  hi!! i'm mochi!!",
         description=(
-            "i'm a cutesy bat who watches your art accounts and shares your posts "
-            "here so everyone can see your work!! 🍡✨\n\n"
-            "here's what i can do right now~"
+            "mochi is a lumi bear who watches your art accounts and squeaks whenever something new goes up!! "
+            "she's been doing this for a very long time~ 🍡\n\n"
+            "here's everything mochi can do right now!!"
         ),
         color=0xc084fc
     )
@@ -262,7 +262,10 @@ async def help_command(ctx):
     )
     embed.add_field(
         name="🦇 other",
-        value="`m!ping` — check if mochi is awake",
+        value=(
+            "`m!ping` — check if mochi is awake~\n"
+            "`m!testpost <username>` — *mochi peeks at an instagram RIGHT NOW (shh, it's for testing~)*"
+        ),
         inline=False
     )
     embed.set_footer(text="mochi bot • made with 💜 for the art server")
@@ -272,7 +275,52 @@ async def help_command(ctx):
 @bot.command(name="ping")
 async def ping(ctx):
     ms = round(bot.latency * 1000)
-    await ctx.send(f"🦇 *flaps wings* mochi is awake!! pong~ `{ms}ms` 💜")
+    await ctx.send(f"🦇  *flaps wings*  mochi is here!! pong~  `{ms}ms`  💜")
+
+
+@bot.command(name="testpost")
+async def test_post(ctx, username: str = None):
+    """m!testpost <instagram_username> — force-grab the latest post right now"""
+    if username is None:
+        await ctx.send(
+            "🦇  mochi needs a username to test with!!\n"
+            "usage: `m!testpost yourinstagramusername`~"
+        )
+        return
+
+    username = username.strip("/").split("/")[-1].replace("@", "").lower()
+
+    channel_id = get_art_channel(ctx.guild.id)
+    if channel_id is None:
+        await ctx.send("psst~ no art channel is set yet! run `m!setchannel` first 💜")
+        return
+    channel = bot.get_channel(channel_id)
+    if channel is None:
+        await ctx.send("waaah!! mochi can't find the art channel... try running `m!setchannel` again :c")
+        return
+
+    await ctx.send(f"🍡  okay!! mochi is going to peek at **@{username}** right now~")
+
+    async with ctx.typing():
+        try:
+            profile = await asyncio.to_thread(
+                instaloader.Profile.from_username, L.context, username
+            )
+            posts = profile.get_posts()
+            post = next(iter(posts), None)
+
+            if post is None:
+                await ctx.send(f"mochi looked but **@{username}** hasn't posted anything yet... :c")
+                return
+
+            await post_to_channel(channel, profile, post, ctx.author.id)
+            if channel != ctx.channel:
+                await ctx.send(f"eek!! mochi posted it in {channel.mention}!! go look go look!! 🦇✨")
+
+        except instaloader.exceptions.ProfileNotExistsException:
+            await ctx.send(f"mochi looked absolutely everywhere for `@{username}` and couldn't find it... is the username right? :c")
+        except Exception as e:
+            await ctx.send(f"something got in mochi's way just now~ try again in a little bit, okay? 💜\n*(error: `{e}`)*")
 
 
 @bot.command(name="setchannel")
@@ -285,11 +333,10 @@ async def set_channel(ctx, channel: discord.TextChannel = None):
     set_art_channel(ctx.guild.id, target.id)
 
     embed = discord.Embed(
-        title="🍡 art feed channel set!",
+        title="🍡  art feed set!!",
         description=(
-            f"mochi will now post new artwork in {target.mention}! 🦇\n\n"
-            f"make sure mochi has permission to **send messages** and "
-            f"**embed links** in that channel~"
+            f"mochi will post all the art right in {target.mention} from now on!! eek, she's so ready~ 🦇\n\n"
+            f"*(just make sure mochi has permission to **send messages** and **embed links** in there~)*"
         ),
         color=0xc084fc
     )
@@ -299,9 +346,9 @@ async def set_channel(ctx, channel: discord.TextChannel = None):
 @set_channel.error
 async def set_channel_error(ctx, error):
     if isinstance(error, commands.MissingPermissions):
-        await ctx.send("🦇 only admins with **Manage Channels** permission can set the art feed channel!")
+        await ctx.send("oh!! only admins with **manage channels** permission can do that one~ 💜")
     elif isinstance(error, commands.ChannelNotFound):
-        await ctx.send("🦇 mochi couldn't find that channel! try mentioning it like `#art-feed`~")
+        await ctx.send("mochi couldn't find that channel... try mentioning it like `#channel-name`~")
 
 
 @bot.command(name="channel")
@@ -310,17 +357,16 @@ async def show_channel(ctx):
     channel_id = get_art_channel(ctx.guild.id)
     if channel_id is None:
         await ctx.send(
-            "🦇 no art feed channel set yet!\n"
-            "admins can use `m!setchannel #channel-name` to set one~"
+            "🦇  no art channel yet~ an admin can run `m!setchannel` to pick one!"
         )
         return
     channel = bot.get_channel(channel_id)
     if channel:
-        await ctx.send(f"🍡 mochi is posting art in {channel.mention}! 🦇")
+        await ctx.send(f"🍡  mochi is posting art in {channel.mention} right now! 🦇")
     else:
         await ctx.send(
-            "🦇 mochi has a channel saved but can't find it anymore... "
-            "an admin might need to run `m!setchannel` again!"
+            "waaah!! mochi has a channel saved but can't find it anymore... "
+            "an admin might need to run `m!setchannel` again :c"
         )
 
 
