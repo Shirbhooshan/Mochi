@@ -1,0 +1,13 @@
+services:
+  - type: worker
+    name: Mochi
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python bot.py
+    envVars:
+      - key: DISCORD_TOKEN
+        sync: false
+    disk:
+      name: mochi-data
+      mountPath: /data
+      sizeGB: 1
