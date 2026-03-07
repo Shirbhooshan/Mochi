@@ -6,9 +6,6 @@ import asyncio
 import os
 import random
 from datetime import datetime, timezone
-from dotenv import load_dotenv
-
-load_dotenv()
 
 # ── Config ────────────────────────────────────────────────────────────────────
 TOKEN       = os.getenv("DISCORD_TOKEN")
@@ -43,7 +40,7 @@ def mochi_caption():
 
 # ── Database ──────────────────────────────────────────────────────────────────
 def db_connect():
-    conn = sqlite3.connect("/data/mochi.db")
+    conn = sqlite3.connect("mochi.db")
     conn.execute("""
         CREATE TABLE IF NOT EXISTS registrations (
             discord_id   TEXT NOT NULL,
@@ -90,9 +87,18 @@ L = instaloader.Instaloader(
     download_comments=False,
     save_metadata=False,
     quiet=True,
+    max_connection_attempts=1,   # don't retry — fail fast on 429
+    request_timeout=15,          # give up after 15 seconds per request
 )
 # Optional: log into Instagram for better rate limits
 # L.login("your_ig_username", "your_ig_password")
+
+async def fetch_profile(username):
+    """Fetch an Instagram profile with a hard 20s timeout — never hangs."""
+    return await asyncio.wait_for(
+        asyncio.to_thread(instaloader.Profile.from_username, L.context, username),
+        timeout=20
+    )
 
 # ── Bot setup ─────────────────────────────────────────────────────────────────
 intents = discord.Intents.default()
@@ -118,13 +124,16 @@ async def add_account(ctx, link: str = None):
     # Verify the account exists on Instagram
     async with ctx.typing():
         try:
-            profile = await asyncio.to_thread(
-                instaloader.Profile.from_username, L.context, username
-            )
+            profile = await fetch_profile(username)
         except instaloader.exceptions.ProfileNotExistsException:
             await ctx.send(
                 f"mochi looked absolutely everywhere for `@{username}` and couldn't find it... "
                 f"is the username right? :c"
+            )
+            return
+        except asyncio.TimeoutError:
+            await ctx.send(
+                f"mochi timed out trying to reach instagram... they might be grumpy right now~ try again in a bit! 💜"
             )
             return
         except Exception as e:
@@ -179,7 +188,6 @@ async def add_account(ctx, link: str = None):
 
     await ctx.send(embed=embed)
 
-
 @bot.command(name="remove")
 async def remove_account(ctx, link: str = None):
     """m!remove <instagram_link_or_username> — unregister your Instagram"""
@@ -201,7 +209,6 @@ async def remove_account(ctx, link: str = None):
         await ctx.send(f"okay!! mochi will stop watching **@{username}** for you~ 💜")
     else:
         await ctx.send(f"mochi doesn't have that account linked to you... are you sure it was added? :c")
-
 
 @bot.command(name="list")
 async def list_accounts(ctx):
@@ -228,7 +235,6 @@ async def list_accounts(ctx):
     )
     embed.set_footer(text="mochi is watching these for new posts 🦇")
     await ctx.send(embed=embed)
-
 
 @bot.command(name="help")
 async def help_command(ctx):
@@ -261,6 +267,21 @@ async def help_command(ctx):
         inline=False
     )
     embed.add_field(
+        name="🎨 art prompts",
+        value="`m!prompt` — mochi picks a random art prompt just for you~",
+        inline=False
+    )
+    embed.add_field(
+        name="🍡 mochi interactions",
+        value=(
+            "`m!pet` — give mochi headpats!!\n"
+            "`m!feed` — give mochi a snack~\n"
+            "`m!poke` — poke mochi (she will remember this)\n"
+            "`m!mochi` — see what mochi is up to right now"
+        ),
+        inline=False
+    )
+    embed.add_field(
         name="🦇 other",
         value=(
             "`m!ping` — check if mochi is awake~\n"
@@ -271,12 +292,10 @@ async def help_command(ctx):
     embed.set_footer(text="mochi bot • made with 💜 for the art server")
     await ctx.send(embed=embed)
 
-
 @bot.command(name="ping")
 async def ping(ctx):
     ms = round(bot.latency * 1000)
     await ctx.send(f"🦇  *flaps wings*  mochi is here!! pong~  `{ms}ms`  💜")
-
 
 @bot.command(name="testpost")
 async def test_post(ctx, username: str = None):
@@ -301,27 +320,25 @@ async def test_post(ctx, username: str = None):
 
     await ctx.send(f"🍡  okay!! mochi is going to peek at **@{username}** right now~")
 
-    async with ctx.typing():
-        try:
-            profile = await asyncio.to_thread(
-                instaloader.Profile.from_username, L.context, username
-            )
-            posts = profile.get_posts()
-            post = next(iter(posts), None)
+    try:
+        profile = await fetch_profile(username)
+        posts = profile.get_posts()
+        post = next(iter(posts), None)
 
-            if post is None:
-                await ctx.send(f"mochi looked but **@{username}** hasn't posted anything yet... :c")
-                return
+        if post is None:
+            await ctx.send(f"mochi looked but **@{username}** hasn't posted anything yet... :c")
+            return
 
-            await post_to_channel(channel, profile, post, ctx.author.id)
-            if channel != ctx.channel:
-                await ctx.send(f"eek!! mochi posted it in {channel.mention}!! go look go look!! 🦇✨")
+        await post_to_channel(channel, profile, post, ctx.author.id)
+        if channel != ctx.channel:
+            await ctx.send(f"eek!! mochi posted it in {channel.mention}!! go look go look!! 🦇✨")
 
-        except instaloader.exceptions.ProfileNotExistsException:
-            await ctx.send(f"mochi looked absolutely everywhere for `@{username}` and couldn't find it... is the username right? :c")
-        except Exception as e:
-            await ctx.send(f"something got in mochi's way just now~ try again in a little bit, okay? 💜\n*(error: `{e}`)*")
-
+    except instaloader.exceptions.ProfileNotExistsException:
+        await ctx.send(f"mochi looked absolutely everywhere for `@{username}` and couldn't find it... is the username right? :c")
+    except asyncio.TimeoutError:
+        await ctx.send(f"waaah!! instagram kept mochi waiting too long and she gave up~ try again in a bit! 💜")
+    except Exception as e:
+        await ctx.send(f"something got in mochi's way just now~ try again in a little bit, okay? 💜\n*(error: `{e}`)*")
 
 @bot.command(name="setchannel")
 @commands.has_permissions(manage_channels=True)
@@ -350,7 +367,6 @@ async def set_channel_error(ctx, error):
     elif isinstance(error, commands.ChannelNotFound):
         await ctx.send("mochi couldn't find that channel... try mentioning it like `#channel-name`~")
 
-
 @bot.command(name="channel")
 async def show_channel(ctx):
     """m!channel — show the current art feed channel"""
@@ -369,6 +385,179 @@ async def show_channel(ctx):
             "an admin might need to run `m!setchannel` again :c"
         )
 
+
+# ── Mochi interaction data ─────────────────────────────────────────────────────
+
+PET_RESPONSES = [
+    "🦇 *ears perk up* eek!! {user} gave mochi headpats!! she went all warm and gold~",
+    "🍡 *happy wiggles* mochi's colours are going all sparkly!! keep going keep going!!",
+    "🦇 {user} is patting mochi!! she's going rosy pink and she can't stop it!!",
+    "✨ *melts a little* mochi thinks {user} might be her favourite person right now~",
+    "🍡 eek!! mochi's so happy she's glowing!! thank you {user}!!",
+    "🦇 *leans into the pat* mochi has decided to stay here forever now. this is her home.",
+]
+
+FEED_RESPONSES = [
+    ("🍡", "*eyes go huge* waaah!! {user} brought mochi a {food}!! she's going all sparkly!!"),
+    ("🦇", "*nibbles cautiously* oh!! oh this is really good!! mochi's going warm and golden~"),
+    ("✨", "eek!! {user} fed mochi a {food}!! she's so happy she accidentally started glowing!!"),
+    ("🍡", "*immediately finishes it* mochi would like another one. please. 🥺"),
+    ("🦇", "waaah!! mochi wasn't expecting that!! {user} is so nice!! she went all pink~"),
+]
+
+FOODS = [
+    "mochi 🍡", "strawberry 🍓", "bat-shaped cookie 🦇", "little rice ball 🍙",
+    "piece of starfruit ⭐", "tiny cake slice 🍰", "bubble tea 🧋", "mango 🥭",
+    "sweet dumpling 🥟", "honey candy 🍯",
+]
+
+POKE_RESPONSES = [
+    "🦇 *blinks slowly* ...did {user} just poke mochi.",
+    "🍡 eek!! {user}!! mochi was SLEEPING!! she went pale lilac from the shock!!",
+    "🦇 *turns around and pokes back* there. mochi poked {user} back. we're even now.",
+    "✨ *flutters wings in surprise* waaah!! what was that for {user}!!",
+    "🍡 mochi is choosing to ignore this. she's going deep blue-violet. very focused. very calm.",
+    "🦇 *wobbles and almost falls off the branch* {user}!! mochi nearly fell!! she's all patchy pink!!",
+    "✨ ...mochi is watching {user} now. just so they know.",
+]
+
+MOCHI_STATUS = [
+    ("🌙", "mochi is hanging upside down in the rafters, watching the art feed very seriously."),
+    ("🦇", "mochi is doing her rounds!! checking on all the linked accounts~ she's glowing a little."),
+    ("🍡", "mochi is sitting very still and thinking about snacks. the thinking is going well."),
+    ("✨", "mochi is reorganising her cave wall. she has a lot of art saved up there now~"),
+    ("🦇", "mochi is awake!! she went sparkly the moment someone asked about her!!"),
+    ("🌙", "mochi was asleep but she's up now!! she's a little pale lilac still~"),
+    ("🍡", "mochi is practising her flapping. it's going great. she is a very good flapper."),
+]
+
+# ── Art prompt data ────────────────────────────────────────────────────────────
+
+PROMPT_SUBJECTS = [
+    "a creature that only comes out during storms",
+    "a tiny spirit who lives inside a teapot",
+    "someone finding a door that wasn't there yesterday",
+    "a market that only appears at midnight",
+    "a garden that grows memories instead of plants",
+    "a lighthouse keeper who has never seen a ship",
+    "a map of a place that doesn't exist yet",
+    "a musician whose songs change the weather",
+    "two strangers sharing an umbrella",
+    "a library at the bottom of the ocean",
+    "a painter who can only paint the future",
+    "a creature made entirely of moonlight",
+    "an old robot discovering a flower for the first time",
+    "a witch whose cat is more powerful than she is",
+    "a city built on the back of a sleeping giant",
+    "a child who collects lost things",
+    "a fox who wants to be a star",
+    "a window that shows a different world",
+    "the last dragon, very small and very tired",
+    "a clockmaker who stopped time by accident",
+    "a ghost who doesn't know any scary stories",
+    "a forest where the trees walk at night",
+    "a letter that took 100 years to arrive",
+    "a cloud that fell to earth and can't get back up",
+    "a baker whose bread tastes like feelings",
+]
+
+PROMPT_MOODS = [
+    "soft and dreamlike",
+    "melancholy but hopeful",
+    "warm and cozy",
+    "mysterious and quiet",
+    "joyful and chaotic",
+    "eerie but beautiful",
+    "nostalgic",
+    "whimsical",
+    "bittersweet",
+    "peaceful",
+]
+
+PROMPT_EXTRAS = [
+    "use only three colours",
+    "include something tiny in the corner that tells a second story",
+    "set it at golden hour",
+    "make it look like an old book illustration",
+    "include a light source that doesn't make sense",
+    "set it underwater",
+    "tell a whole story with just the background",
+    "make it look like a postcard",
+    "include something that shouldn't be there",
+    "draw it from an unusual angle",
+    "add rain",
+    "include something written or lettered",
+    "set it at the moment just before something happens",
+    "make something usually scary feel safe",
+    "include a reflection that shows something different",
+]
+
+PROMPT_INTROS = [
+    "🎨 *flutters in excitedly* eek!! mochi found a prompt!! here here here!!",
+    "✨ mochi dug through her whole cave and found this one~ she's very proud!!",
+    "🍡 *presents prompt with both paws* mochi picked this one especially!!",
+    "🦇 the art bats have spoken!! today's prompt is~",
+    "🎨 waaah!! mochi got so excited picking this one she went all sparkly!!",
+    "✨ mochi has been sitting on this prompt for a while waiting for the right moment~",
+]
+
+# ── Interaction commands ───────────────────────────────────────────────────────
+
+@bot.command(name="pet")
+async def pet_mochi(ctx):
+    """m!pet — give mochi headpats"""
+    response = random.choice(PET_RESPONSES).format(user=ctx.author.display_name)
+    await ctx.send(response)
+
+
+@bot.command(name="feed")
+async def feed_mochi(ctx):
+    """m!feed — give mochi a snack"""
+    emoji, response = random.choice(FEED_RESPONSES)
+    food = random.choice(FOODS)
+    await ctx.send(f"{emoji} {response.format(user=ctx.author.display_name, food=food)}")
+
+
+@bot.command(name="poke")
+async def poke_mochi(ctx):
+    """m!poke — poke mochi"""
+    response = random.choice(POKE_RESPONSES).format(user=ctx.author.display_name)
+    await ctx.send(response)
+
+
+@bot.command(name="mochi")
+async def mochi_status(ctx):
+    """m!mochi — see what mochi is up to"""
+    emoji, status = random.choice(MOCHI_STATUS)
+    embed = discord.Embed(
+        description=f"{emoji}  {status}",
+        color=0xc084fc
+    )
+    embed.set_author(name="mochi • lumi bear • age 105 • 3ft tall")
+    embed.set_footer(text="🦇 adaptive colour shift specialist")
+    await ctx.send(embed=embed)
+
+
+# ── Art prompt command ─────────────────────────────────────────────────────────
+
+@bot.command(name="prompt")
+async def art_prompt(ctx):
+    """m!prompt — get a random art prompt"""
+    subject = random.choice(PROMPT_SUBJECTS)
+    mood    = random.choice(PROMPT_MOODS)
+    extra   = random.choice(PROMPT_EXTRAS)
+    intro   = random.choice(PROMPT_INTROS)
+
+    embed = discord.Embed(
+        title="🎨  today's art prompt~",
+        color=0xc084fc
+    )
+    embed.add_field(name="✏️  draw...", value=f"*{subject}*", inline=False)
+    embed.add_field(name="🌙  mood...", value=f"*{mood}*", inline=False)
+    embed.add_field(name="✨  bonus challenge...", value=f"*{extra}*", inline=False)
+    embed.set_footer(text="mochi will be watching for your art!! 🦇  •  m!prompt for a new one~")
+
+    await ctx.send(content=intro, embed=embed)
 
 # ── Background task: poll Instagram for new posts ─────────────────────────────
 
@@ -404,9 +593,7 @@ async def check_instagram():
             continue
 
         try:
-            profile = await asyncio.to_thread(
-                instaloader.Profile.from_username, L.context, username
-            )
+            profile = await fetch_profile(username)
             posts = profile.get_posts()
             new_posts = []
 
@@ -434,11 +621,12 @@ async def check_instagram():
                 await post_to_channel(channel, profile, post, discord_id)
                 await asyncio.sleep(2)  # small delay between posts
 
+        except asyncio.TimeoutError:
+            print(f"[mochi] ⚠️  timed out checking @{username} — instagram too slow, skipping~")
         except Exception as e:
             print(f"[mochi] error checking @{username}: {e}")
         
         await asyncio.sleep(5)  # be polite between users
-
 
 async def post_to_channel(channel, profile, post, discord_id):
     """Build and send the Mochi art embed to the channel."""
@@ -486,12 +674,10 @@ async def post_to_channel(channel, profile, post, discord_id):
         embed=embed
     )
 
-
 @check_instagram.before_loop
 async def before_check():
     await bot.wait_until_ready()
     print("[mochi] 🦇 starting instagram watcher~")
-
 
 # ── Startup ───────────────────────────────────────────────────────────────────
 
