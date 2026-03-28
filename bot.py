@@ -1,8 +1,8 @@
 import discord
 from discord.ext import commands, tasks
 import sqlite3
-import instaloader
 import asyncio
+import aiohttp
 import os
 import random
 from datetime import datetime, timezone
@@ -78,27 +78,71 @@ def set_art_channel(guild_id: int, channel_id: int):
     conn.commit()
     conn.close()
 
-# ── Instaloader setup ─────────────────────────────────────────────────────────
-L = instaloader.Instaloader(
-    download_pictures=True,
-    download_videos=False,
-    download_video_thumbnails=False,
-    download_geotags=False,
-    download_comments=False,
-    save_metadata=False,
-    quiet=True,
-    max_connection_attempts=1,   # don't retry — fail fast on 429
-    request_timeout=15,          # give up after 15 seconds per request
-)
-# Optional: log into Instagram for better rate limits
-# L.login("your_ig_username", "your_ig_password")
+# ── Apify setup ───────────────────────────────────────────────────────────────
+APIFY_TOKEN  = os.getenv("API_token")
+APIFY_ACTOR  = "perfectscrape~mass-instagram-profile-posts-scraper-results-based"
+APIFY_BASE   = "https://api.apify.com/v2"
 
-async def fetch_profile(username):
-    """Fetch an Instagram profile with a hard 20s timeout — never hangs."""
-    return await asyncio.wait_for(
-        asyncio.to_thread(instaloader.Profile.from_username, L.context, username),
-        timeout=20
-    )
+async def apify_get_latest_post(username: str) -> dict | None:
+    """
+    Runs the Apify Instagram profile post scraper for a username and returns
+    the most recent post as a dict, or None if nothing found.
+    """
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {APIFY_TOKEN}"
+    }
+    payload = {
+        "usernames": [username],
+        "resultsLimit": 5,
+    }
+
+    async with aiohttp.ClientSession() as session:
+        # Start the actor run
+        run_url = f"{APIFY_BASE}/acts/{APIFY_ACTOR}/runs"
+        async with session.post(run_url, json=payload, headers=headers, timeout=aiohttp.ClientTimeout(total=60)) as resp:
+            if resp.status != 201:
+                text = await resp.text()
+                raise Exception(f"Apify run failed ({resp.status}): {text}")
+            run_data = await resp.json()
+            run_id   = run_data["data"]["id"]
+            dataset_id = run_data["data"]["defaultDatasetId"]
+
+        # Wait for run to finish (poll every 5s, max 90s)
+        status_url = f"{APIFY_BASE}/actor-runs/{run_id}"
+        for _ in range(18):
+            await asyncio.sleep(5)
+            async with session.get(status_url, headers=headers) as resp:
+                status_data = await resp.json()
+                status = status_data["data"]["status"]
+                if status == "SUCCEEDED":
+                    break
+                elif status in ("FAILED", "ABORTED", "TIMED-OUT"):
+                    raise Exception(f"Apify run {status}")
+
+        # Fetch results from dataset
+        items_url = f"{APIFY_BASE}/datasets/{dataset_id}/items?limit=5"
+        async with session.get(items_url, headers=headers) as resp:
+            items = await resp.json()
+
+        if not items:
+            return None
+
+        # Return the most recent post (first item)
+        return items[0]
+
+
+def apify_post_to_embed_data(post: dict) -> dict:
+    """Extract the fields we need from an Apify post result."""
+    return {
+        "shortcode":  post.get("shortCode", ""),
+        "image_url":  post.get("displayUrl") or (post.get("images") or [None])[0],
+        "caption":    post.get("caption", "") or "",
+        "timestamp":  post.get("timestamp", ""),
+        "post_url":   post.get("url") or f"https://www.instagram.com/p/{post.get('shortCode', '')}/",
+        "owner":      post.get("ownerUsername", post.get("username", "")),
+        "pic_url":    post.get("ownerProfilePicUrl", ""),
+    }
 
 # ── Bot setup ─────────────────────────────────────────────────────────────────
 intents = discord.Intents.default()
@@ -121,21 +165,20 @@ async def add_account(ctx, link: str = None):
     username = link.strip("/").split("/")[-1].replace("@", "").lower()
     username = username.split("?")[0]  # strip query params
 
-    # Verify the account exists on Instagram
+    # Verify account exists and get latest post ID via Apify
+    await ctx.send(f"🍡 mochi is checking **@{username}**~ this might take a moment!!")
     async with ctx.typing():
         try:
-            profile = await fetch_profile(username)
-        except instaloader.exceptions.ProfileNotExistsException:
-            await ctx.send(
-                f"mochi looked absolutely everywhere for `@{username}` and couldn't find it... "
-                f"is the username right? :c"
-            )
-            return
-        except asyncio.TimeoutError:
-            await ctx.send(
-                f"mochi timed out trying to reach instagram... they might be grumpy right now~ try again in a bit! 💜"
-            )
-            return
+            post = await apify_get_latest_post(username)
+            if post is None:
+                await ctx.send(
+                    f"mochi looked everywhere for `@{username}` but couldn't find any posts... "
+                    f"is the account public and does it exist? :c"
+                )
+                return
+            data    = apify_post_to_embed_data(post)
+            last_id = data["shortcode"]
+            pic_url = data["pic_url"]
         except Exception as e:
             await ctx.send(
                 f"something got in mochi's way just now~ try again in a little bit, okay? 💜"
@@ -146,16 +189,6 @@ async def add_account(ctx, link: str = None):
     # Save to DB
     conn = db_connect()
     try:
-        # Get most recent post ID so we don't spam old posts on first run
-        last_id = None
-        try:
-            posts = profile.get_posts()
-            first = next(iter(posts), None)
-            if first:
-                last_id = str(first.shortcode)
-        except:
-            pass
-
         conn.execute(
             """INSERT OR REPLACE INTO registrations
                (discord_id, discord_name, instagram, last_post_id, added_at)
@@ -175,7 +208,8 @@ async def add_account(ctx, link: str = None):
         ),
         color=0xc084fc
     )
-    embed.set_thumbnail(url=profile.profile_pic_url)
+    if pic_url:
+        embed.set_thumbnail(url=pic_url)
     embed.set_footer(text=f"linked by {ctx.author} • mochi bot 🦇")
 
     # Warn if no art channel has been set yet
@@ -321,22 +355,19 @@ async def test_post(ctx, username: str = None):
     await ctx.send(f"🍡  okay!! mochi is going to peek at **@{username}** right now~")
 
     try:
-        profile = await fetch_profile(username)
-        posts = profile.get_posts()
-        post = next(iter(posts), None)
+        post = await apify_get_latest_post(username)
 
         if post is None:
             await ctx.send(f"mochi looked but **@{username}** hasn't posted anything yet... :c")
             return
 
-        await post_to_channel(channel, profile, post, ctx.author.id)
+        data = apify_post_to_embed_data(post)
+        await post_to_channel(channel, data, ctx.author.id)
         if channel != ctx.channel:
             await ctx.send(f"eek!! mochi posted it in {channel.mention}!! go look go look!! 🦇✨")
 
-    except instaloader.exceptions.ProfileNotExistsException:
-        await ctx.send(f"mochi looked absolutely everywhere for `@{username}` and couldn't find it... is the username right? :c")
     except asyncio.TimeoutError:
-        await ctx.send(f"waaah!! instagram kept mochi waiting too long and she gave up~ try again in a bit! 💜")
+        await ctx.send(f"waaah!! apify kept mochi waiting too long~ try again in a bit! 💜")
     except Exception as e:
         await ctx.send(f"something got in mochi's way just now~ try again in a little bit, okay? 💜\n*(error: `{e}`)*")
 
@@ -593,79 +624,62 @@ async def check_instagram():
             continue
 
         try:
-            profile = await fetch_profile(username)
-            posts = profile.get_posts()
-            new_posts = []
+            post = await apify_get_latest_post(username)
+            if post is None:
+                continue
 
-            for post in posts:
-                if str(post.shortcode) == last_post_id:
-                    break
-                new_posts.append(post)
-                if len(new_posts) >= 5:  # cap to avoid spam on first run
-                    break
+            data = apify_post_to_embed_data(post)
+            shortcode = data["shortcode"]
 
-            if not new_posts:
+            if shortcode == last_post_id:
                 continue
 
             # Update last seen post
             conn = db_connect()
             conn.execute(
                 "UPDATE registrations SET last_post_id=? WHERE discord_id=? AND instagram=?",
-                (str(new_posts[0].shortcode), discord_id, username)
+                (shortcode, discord_id, username)
             )
             conn.commit()
             conn.close()
 
-            # Post newest-first (reverse so timeline order)
-            for post in reversed(new_posts):
-                await post_to_channel(channel, profile, post, discord_id)
-                await asyncio.sleep(2)  # small delay between posts
+            await post_to_channel(channel, data, discord_id)
 
         except asyncio.TimeoutError:
-            print(f"[mochi] ⚠️  timed out checking @{username} — instagram too slow, skipping~")
+            print(f"[mochi] ⚠️  timed out checking @{username} — apify too slow, skipping~")
         except Exception as e:
             print(f"[mochi] error checking @{username}: {e}")
         
         await asyncio.sleep(5)  # be polite between users
 
-async def post_to_channel(channel, profile, post, discord_id):
+async def post_to_channel(channel, data: dict, discord_id):
     """Build and send the Mochi art embed to the channel."""
-    username = profile.username
-    post_url = f"https://www.instagram.com/p/{post.shortcode}/"
+    username  = data["owner"] or "unknown"
+    post_url  = data["post_url"]
+    image_url = data["image_url"]
+    pic_url   = data["pic_url"]
 
     # Caption (truncated)
-    caption = post.caption or ""
+    caption = data["caption"] or ""
     if len(caption) > 300:
         caption = caption[:297] + "..."
 
-    # Mochi intro message
+    # Mochi lines
     intro = mochi_intro(username)
     outro = mochi_caption()
-
-    # Get image URL (first image for carousels)
-    image_url = None
-    try:
-        if post.typename == "GraphSidecar":
-            # carousel — grab first node
-            node = next(iter(post.get_sidecar_nodes()))
-            image_url = node.display_url
-        else:
-            image_url = post.url
-    except:
-        image_url = post.url
 
     embed = discord.Embed(
         description=f"*{caption}*" if caption else "",
         color=0xc084fc,
         url=post_url,
-        timestamp=post.date_utc
     )
     embed.set_author(
         name=f"@{username}",
         url=f"https://instagram.com/{username}",
-        icon_url=profile.profile_pic_url
+        icon_url=pic_url or ""
     )
-    embed.set_image(url=image_url)
+    if image_url:
+        embed.set_image(url=image_url)
     embed.add_field(name="", value=f"[view on instagram ↗]({post_url})", inline=False)
     embed.set_footer(text=f"{outro}  •  🦇 mochi bot")
 
